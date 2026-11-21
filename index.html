@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>粒子书房 · 写实版预览</title>
+<style>
+  html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#070503; }
+  #app { position:fixed; inset:0; }
+  canvas { display:block; }
+  #tip { position:fixed; left:0; right:0; bottom:18px; text-align:center; color:rgba(255,240,220,.55);
+         font:13px -apple-system, sans-serif; pointer-events:none; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="tip">正在加载粒子…</div>
+<script src="./palace-bundle.js"></script>
+<script>
+function fromB64(b64) {
+  const bin = atob(b64);
+  const u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return u8;
+}
+fetch('./baked.json').then(r => r.json()).then((DATA) => {
+  const n = DATA.n;
+  const pos = new Float32Array(fromB64(DATA.pos).buffer);
+  const colU = fromB64(DATA.col);
+  const sclU = fromB64(DATA.scl);
+  const col = new Float32Array(n * 3);
+  for (let i = 0; i < n * 3; i++) col[i] = colU[i] / 255;
+  const scl = new Float32Array(n);
+  const pha = new Float32Array(n);
+  let seed = 42;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let i = 0; i < n; i++) { scl[i] = sclU[i] / 255 * 1.5; pha[i] = rnd() * Math.PI * 2; }
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0.027, 0.02, 0.012);
+  const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.1, 100);
+  camera.position.set(7.9, 6.6, 9.8);
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(innerWidth, innerHeight);
+  document.getElementById('app').appendChild(renderer.domElement);
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.target.set(0, 0.75, 0);
+  controls.enableDamping = true; controls.dampingFactor = 0.06;
+  controls.minDistance = 3; controls.maxDistance = 22;
+  controls.maxPolarAngle = Math.PI * 0.495;
+  controls.autoRotate = true; controls.autoRotateSpeed = 0.6;
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  geo.setAttribute('aScale', new THREE.BufferAttribute(scl, 1));
+  geo.setAttribute('aPhase', new THREE.BufferAttribute(pha, 1));
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 }, uSize: { value: 0.34 } },
+    vertexShader: `
+      attribute float aScale; attribute float aPhase;
+      uniform float uTime; uniform float uSize;
+      varying vec3 vColor; varying float vTw;
+      void main() {
+        vColor = color;
+        vec3 p = position;
+        p.x += sin(uTime * 0.4 + aPhase) * 0.004;
+        p.y += sin(uTime * 0.55 + aPhase * 1.7) * 0.005;
+        vTw = 0.84 + 0.26 * sin(uTime * (0.9 + fract(aPhase) * 0.9) + aPhase * 3.1);
+        vec4 mv = modelViewMatrix * vec4(p, 1.0);
+        gl_PointSize = uSize * aScale * (300.0 / -mv.z);
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: `
+      varying vec3 vColor; varying float vTw;
+      void main() {
+        float d = length(gl_PointCoord - 0.5);
+        float a = pow(smoothstep(0.5, 0.0, d), 1.7);
+        gl_FragColor = vec4(vColor * vTw, a);
+      }`,
+    vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
+  });
+  scene.add(new THREE.Points(geo, mat));
+  document.getElementById('tip').textContent = '粒子书房 · 写实版 — 拖动旋转，捏合缩放';
+  const clock = new THREE.Clock();
+  (function tick() {
+    requestAnimationFrame(tick);
+    mat.uniforms.uTime.value = clock.getElapsedTime();
+    controls.update();
+    renderer.render(scene, camera);
+  })();
+  addEventListener('resize', () => {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+  });
+}).catch(e => {
+  document.getElementById('tip').textContent = '加载失败，请刷新重试';
+});
+</script>
+</body>
+</html>
