@@ -17,19 +17,23 @@
 <div id="tip">正在加载粒子…</div>
 <script src="./palace-bundle.js"></script>
 <script>
-function fromB64(b64) {
-  const bin = atob(b64);
-  const u8 = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-  return u8;
-}
-fetch('./baked.json').then(r => r.json()).then((DATA) => {
-  const n = DATA.n;
-  const pos = new Float32Array(fromB64(DATA.pos).buffer);
-  const colU = fromB64(DATA.col);
-  const sclU = fromB64(DATA.scl);
+Promise.all([
+  fetch('./points-meta.json').then(r => r.json()),
+  fetch('./points-pos.bin').then(r => r.arrayBuffer()),
+  fetch('./points-col.bin').then(r => r.arrayBuffer()),
+  fetch('./points-scl.bin').then(r => r.arrayBuffer())
+]).then(([meta, posBuf, colBuf, sclBuf]) => {
+  const n = meta.n;
+  const q = new Int16Array(posBuf);
+  const pos = new Float32Array(n * 3);
+  for (let i = 0; i < n * 3; i++) {
+    const a = i % 3;
+    pos[i] = (q[i] + 32768) / 65535 * (meta.max[a] - meta.min[a]) + meta.min[a];
+  }
+  const colU = new Uint8Array(colBuf);
   const col = new Float32Array(n * 3);
-  for (let i = 0; i < n * 3; i++) col[i] = colU[i] / 255 * 0.72;
+  for (let i = 0; i < n * 3; i++) col[i] = colU[i] / 255;
+  const sclU = new Uint8Array(sclBuf);
   const scl = new Float32Array(n);
   const pha = new Float32Array(n);
   let seed = 42;
@@ -57,7 +61,7 @@ fetch('./baked.json').then(r => r.json()).then((DATA) => {
   geo.setAttribute('aScale', new THREE.BufferAttribute(scl, 1));
   geo.setAttribute('aPhase', new THREE.BufferAttribute(pha, 1));
   const mat = new THREE.ShaderMaterial({
-    uniforms: { uTime: { value: 0 }, uSize: { value: 0.24 } },
+    uniforms: { uTime: { value: 0 }, uSize: { value: 0.115 } },
     vertexShader: `
       attribute float aScale; attribute float aPhase;
       uniform float uTime; uniform float uSize;
@@ -65,9 +69,9 @@ fetch('./baked.json').then(r => r.json()).then((DATA) => {
       void main() {
         vColor = color;
         vec3 p = position;
-        p.x += sin(uTime * 0.4 + aPhase) * 0.004;
-        p.y += sin(uTime * 0.55 + aPhase * 1.7) * 0.005;
-        vTw = 0.84 + 0.26 * sin(uTime * (0.9 + fract(aPhase) * 0.9) + aPhase * 3.1);
+        p.x += sin(uTime * 0.4 + aPhase) * 0.0012;
+        p.y += sin(uTime * 0.55 + aPhase * 1.7) * 0.0015;
+        vTw = 0.96 + 0.05 * sin(uTime * (0.9 + fract(aPhase) * 0.9) + aPhase * 3.1);
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
         gl_PointSize = uSize * aScale * (300.0 / -mv.z);
         gl_Position = projectionMatrix * mv;
@@ -76,13 +80,14 @@ fetch('./baked.json').then(r => r.json()).then((DATA) => {
       varying vec3 vColor; varying float vTw;
       void main() {
         float d = length(gl_PointCoord - 0.5);
-        float a = pow(smoothstep(0.5, 0.0, d), 1.7);
+        float a = smoothstep(0.5, 0.36, d);
+        if (a < 0.03) discard;
         gl_FragColor = vec4(vColor * vTw, a);
       }`,
-    vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
+    vertexColors: true, transparent: true, depthWrite: true, blending: THREE.NormalBlending
   });
   scene.add(new THREE.Points(geo, mat));
-  document.getElementById('tip').textContent = '粒子书房 · 写实版 — 拖动旋转，捏合缩放';
+  document.getElementById('tip').textContent = '粒子书房 · 写实锐利版 — 拖动旋转，捏合缩放';
   const clock = new THREE.Clock();
   (function tick() {
     requestAnimationFrame(tick);
