@@ -251,11 +251,23 @@ const jobs = [
   place('desk.glb',        1.5,  -2.42,  1.12, Math.PI/2),   // 6 书桌
   place('chair.glb',       0.95, -1.68,  1.12, -Math.PI/2),  //    椅子
   place('bookshelf.glb',   1.9,  -1.5,  -1.82, 0),           // 8 书架
-  place('books.glb',       0.62, -1.5,  -1.8,  0, 0.92),     //    书
   place('clock.glb',       0.55,  0.72, -2.0,  0, 1.82),     // 10 挂钟
   place('plant1.glb',      0.8,   2.6,   1.45, 0),           // 角落植物
   place('desk_lamp.glb',   0.5,  -2.66,  1.52, Math.PI/2, 0.74), // 桌灯
 ];
+
+// book row on the bookshelf (primitives, no download)
+{
+  const cols = [0x7a3b2e, 0x44583c, 0x2f4258, 0x8a6a3c, 0x5d3038, 0x77644a, 0x3c4a56, 0x6e4a2a, 0x54423a];
+  let bx = -1.78;
+  cols.forEach((c, i) => {
+    const h = 0.24 + (i % 3) * 0.03, w = 0.04 + (i % 2) * 0.012;
+    const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.17), M(c, 0.9));
+    b.position.set(bx + w/2, 0.94 + h/2, -1.82);
+    b.castShadow = true; scene.add(b);
+    bx += w + 0.006;
+  });
+}
 
 // rug (flat box with rug texture)
 {
@@ -368,7 +380,12 @@ const jobs = [
   scene.add(g);
 }
 
-await Promise.all(jobs);
+let __loaded = 0;
+const __loadEl = document.getElementById('loading');
+await Promise.allSettled(jobs.map(p => Promise.resolve(p).then(() => {
+  __loaded++;
+  __loadEl.textContent = '正在进入宫殿…（' + __loaded + ' / ' + jobs.length + '）';
+})));
 
 // ---------- immersive route glide ----------
 const spots = [
