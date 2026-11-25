@@ -24363,6 +24363,10 @@ function showCard(i) {
   document.getElementById("kcard").classList.add("show");
 }
 function focusSpot(i) {
+  if (i === focusIdx && !anim) {
+    showCard(i);
+    return;
+  }
   if (!hintDone) {
     hintDone = true;
     document.getElementById("bhint").style.opacity = 0;
@@ -24384,7 +24388,6 @@ window.__onArrive = () => {
   if (pendingFocus === null) return;
   focusIdx = pendingFocus;
   pendingFocus = null;
-  if (focusIdx >= 0) showCard(focusIdx);
 };
 var _pv = new Vector3();
 var _pf = new Vector3();
@@ -24401,7 +24404,20 @@ if (BOT && !editView) {
   document.getElementById("chips").style.display = "block";
   document.getElementById("bhint").style.display = "block";
   document.getElementById("kcard").style.display = "block";
-  document.getElementById("kcX").addEventListener("click", goHome);
+  document.getElementById("kcX").addEventListener("click", hideCard);
+  let tapStart = null;
+  renderer.domElement.addEventListener("pointerdown", (e) => {
+    tapStart = { x: e.clientX, y: e.clientY, t: performance.now() };
+  });
+  renderer.domElement.addEventListener("pointerup", (e) => {
+    if (!tapStart) return;
+    const moved = Math.hypot(e.clientX - tapStart.x, e.clientY - tapStart.y);
+    const dt = performance.now() - tapStart.t;
+    tapStart = null;
+    if (moved > 6 || dt > 350 || anim) return;
+    if (document.getElementById("kcard").classList.contains("show")) hideCard();
+    else if (focusIdx >= 0) goHome();
+  });
   const svg = document.getElementById("leaderSvg");
   const NS = "http://www.w3.org/2000/svg";
   const chipEls = spots.map((s, idx) => {
