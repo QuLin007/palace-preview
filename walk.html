@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>记忆宫殿 · 沉浸预览</title>
+<style>
+  html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#14120f;
+    font-family:-apple-system, "PingFang SC", sans-serif; }
+  canvas { display:block; width:100vw; height:100vh; touch-action:none; }
+  #loading { position:fixed; inset:0; background:#14120f; color:#e8e2d4; display:flex;
+    align-items:center; justify-content:center; font-size:17px; letter-spacing:2px;
+    transition:opacity .6s; z-index:10; }
+  #loading.hide { opacity:0; pointer-events:none; }
+  #hud { position:fixed; inset:0; pointer-events:none; z-index:5; }
+  #topbar { position:absolute; top:0; left:0; right:0; display:flex; justify-content:space-between;
+    align-items:center; padding:16px 18px; color:#fff; font-size:16px;
+    text-shadow:0 1px 6px rgba(0,0,0,.65); }
+  #spotCount { opacity:.75; font-size:14px; }
+  #hint { position:absolute; left:0; right:0; bottom:86px; text-align:center; color:rgba(255,255,255,.55);
+    font-size:12.5px; text-shadow:0 1px 4px rgba(0,0,0,.6); }
+  #bottombar { position:absolute; left:0; right:0; bottom:0; display:flex; align-items:center;
+    justify-content:space-between; padding:14px 14px 22px; pointer-events:none; }
+  #bottombar button { pointer-events:auto; }
+  .navbtn { background:rgba(20,18,15,.55); color:#fff; border:1px solid rgba(255,255,255,.25);
+    backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
+    font-size:15.5px; padding:11px 18px; border-radius:999px; cursor:pointer; }
+  .navbtn:disabled { opacity:.35; }
+  #dots { display:flex; gap:7px; pointer-events:auto; }
+  .dot { width:9px; height:9px; border-radius:50%; border:1px solid rgba(255,255,255,.5);
+    background:rgba(255,255,255,.18); padding:0; cursor:pointer; }
+  .dot.on { background:#ffd98f; border-color:#ffd98f; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "./lib/three.module.js" } }
+</script>
+</head>
+<body>
+<div id="loading">正在进入宫殿…</div>
+<div id="hud">
+  <div id="topbar"><span id="spotName"></span><span id="spotCount"></span></div>
+  <div id="hint">拖动画面可以环视</div>
+  <div id="bottombar">
+    <button class="navbtn" id="prevBtn">‹ 上一个点</button>
+    <div id="dots"></div>
+    <button class="navbtn" id="nextBtn">下一个点 ›</button>
+  </div>
+</div>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from './lib/GLTFLoader.js';
+
+const scene = new THREE.Scene();
+const renderer = new THREE.WebGLRenderer({ antialias:false });
+renderer.setSize(600, 556, false);           // low internal res, upscaled (resize handler below)
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.24;
+document.body.appendChild(renderer.domElement);
+
+const camera = new THREE.PerspectiveCamera(62, innerWidth/innerHeight, 0.05, 60);
+
+scene.add(new THREE.HemisphereLight(0xd6dee6, 0x554739, 1.15));
+scene.add(new THREE.AmbientLight(0x65543e, 0.5));
+const sun = new THREE.DirectionalLight(0xffd9a3, 2.6);
+sun.position.set(-3.5, 5.5, -3.5);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -6; sun.shadow.camera.right = 6;
+sun.shadow.camera.top = 6; sun.shadow.camera.bottom = -6;
+sun.shadow.camera.far = 30; sun.shadow.bias = -0.0006;
+scene.add(sun);
+const fill = new THREE.DirectionalLight(0xbcc8d4, 0.45);
+fill.position.set(5, 3, 5);
+scene.add(fill);
+
+// ---------- canvas textures (low-res, photographic-ish) ----------
+function canvasTex(w, h, draw, rx=1, ry=1){
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  draw(c.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rx, ry);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+const rnd = (a,b) => a + Math.random()*(b-a);
+const woodTex = canvasTex(256, 256, (g,s) => {
+  g.fillStyle = '#86643f'; g.fillRect(0,0,s,s);
+  for (let p=0;p<4;p++){
+    const y = p*64;
+    g.fillStyle = ['#8d6b45','#7e5f3c','#896842','#775a38'][p]; g.fillRect(0,y,s,64);
+    for (let i=0;i<52;i++){
+      g.strokeStyle = `rgba(${52+Math.random()*36|0},${32+Math.random()*22|0},14,${rnd(0.08,0.3)})`;
+      g.lineWidth = rnd(0.6,1.8); g.beginPath();
+      const yy = y + rnd(4,60); g.moveTo(0,yy);
+      g.bezierCurveTo(s*0.3, yy+rnd(-3,3), s*0.7, yy+rnd(-3,3), s, yy+rnd(-2,2)); g.stroke();
+    }
+    g.fillStyle = 'rgba(38,22,8,0.6)'; g.fillRect(0,y,s,2);
+  }
+}, 2.5, 2);
+const plasterTex = canvasTex(256, 256, (g,s) => {
+  g.fillStyle = '#c4b69c'; g.fillRect(0,0,s,s);
+  for (let i=0;i<26;i++){ // soft large mottling only, no speckle
+    const x = rnd(0,s), y = rnd(0,s), r = rnd(30,90);
+    const gr = g.createRadialGradient(x, y, 2, x, y, r);
+    const warm = Math.random() < 0.5;
+    gr.addColorStop(0, warm ? 'rgba(120,100,70,0.055)' : 'rgba(235,230,215,0.05)');
+    gr.addColorStop(1, 'rgba(120,100,70,0)');
+    g.fillStyle = gr; g.fillRect(0,0,s,s);
+  }
+}, 3, 1.6);
+const rugTex = canvasTex(256, 256, (g,s) => {
+  g.fillStyle = '#74382b'; g.fillRect(0,0,s,s);
+  g.strokeStyle = '#c2a87f'; g.lineWidth = 5; g.strokeRect(14,14,s-28,s-28);
+  g.strokeStyle = '#9c4f2d'; g.lineWidth = 10; g.strokeRect(30,30,s-60,s-60);
+  for (let i=0;i<3000;i++){
+    g.fillStyle = `rgba(${Math.random()<0.5?28:225},18,12,${rnd(0.03,0.08)})`;
+    g.fillRect(rnd(0,s), rnd(0,s), rnd(1,2.4), rnd(1,2.4));
+  }
+});
+const plasticTex = canvasTex(128, 128, (g,s) => {
+  g.fillStyle = '#b0a58f'; g.fillRect(0,0,s,s);
+  for (let i=0;i<2200;i++){
+    g.fillStyle = `rgba(${Math.random()<0.5?70:240},${Math.random()<0.5?62:232},${Math.random()<0.5?48:210},${rnd(0.03,0.08)})`;
+    g.fillRect(rnd(0,s), rnd(0,s), 1.4, 1.4);
+  }
+});
+const doorTex = canvasTex(128, 256, (g,w,h) => {
+  g.fillStyle = '#7a5a36'; g.fillRect(0,0,w,h);
+  for (let i=0;i<130;i++){
+    g.strokeStyle = `rgba(46,28,10,${rnd(0.08,0.26)})`; g.lineWidth = rnd(0.6,1.6);
+    const x = rnd(0,w); g.beginPath(); g.moveTo(x,0);
+    g.bezierCurveTo(x+rnd(-4,4), h*0.3, x+rnd(-4,4), h*0.7, x+rnd(-3,3), h); g.stroke();
+  }
+  g.strokeStyle = 'rgba(40,24,8,0.8)'; g.lineWidth = 3;
+  g.strokeRect(14, 16, w-28, h*0.38); g.strokeRect(14, h*0.56, w-28, h*0.36);
+});
+const outsideTex = canvasTex(512, 256, (g,w,h) => {
+  const sky = g.createLinearGradient(0,0,0,h);
+  sky.addColorStop(0, '#6fa3d8'); sky.addColorStop(0.6, '#a8c4de'); sky.addColorStop(1, '#d8ddda');
+  g.fillStyle = sky; g.fillRect(0,0,w,h);
+  g.fillStyle = 'rgba(255,255,255,0.9)';
+  for (let i=0;i<9;i++){ const x=rnd(20,w-70), y=rnd(12,h*0.4), r=rnd(12,30);
+    g.beginPath(); g.ellipse(x, y, r*1.7, r*0.55, 0, 0, 7); g.fill(); }
+  for (let i=0;i<26;i++){ // distant blocks
+    const bw = rnd(18,52), bh = rnd(26,86), x = rnd(0,w-bw);
+    g.fillStyle = `rgba(${118+Math.random()*30|0},${128+Math.random()*26|0},${142+Math.random()*22|0},0.95)`;
+    g.fillRect(x, h*0.78-bh, bw, bh);
+    g.fillStyle = 'rgba(240,238,200,0.5)';
+    for (let wy=0; wy<bh-8; wy+=9) for (let wx=4; wx<bw-5; wx+=8) if (Math.random()<0.4) g.fillRect(x+wx, h*0.78-bh+4+wy, 3.4, 4.6);
+  }
+  g.fillStyle = '#5d6066'; g.fillRect(0, h*0.78, w, h*0.22);
+  g.fillStyle = '#494c50';
+  for (let i=0;i<8;i++){ const bw=rnd(40,90); g.fillRect(rnd(0,w-bw), h*0.78, bw, rnd(8,20)); }
+});
+const posterTex = canvasTex(128, 160, (g,w,h) => {
+  const sky = g.createLinearGradient(0,0,0,h*0.7);
+  sky.addColorStop(0, '#31435f'); sky.addColorStop(1, '#b06a3b');
+  g.fillStyle = sky; g.fillRect(0,0,w,h);
+  g.fillStyle = '#e8d9a8'; g.beginPath(); g.arc(w*0.68, h*0.3, 13, 0, 7); g.fill();
+  g.fillStyle = '#232a30';
+  g.beginPath(); g.moveTo(0, h*0.72);
+  for (let x=0;x<=w;x+=16) g.lineTo(x, h*0.72 - Math.abs(Math.sin(x*0.11))*22);
+  g.lineTo(w,h); g.lineTo(0,h); g.fill();
+  g.fillStyle = 'rgba(240,238,230,0.92)'; g.fillRect(0, h*0.86, w, h*0.14);
+  g.fillStyle = '#2a2c30'; g.fillRect(w*0.16, h*0.9, w*0.68, 5);
+});
+const screenTex = canvasTex(128, 96, (g,w,h) => {
+  g.fillStyle = '#7d8f83'; g.fillRect(0,0,w,h);
+  g.fillStyle = '#93a797'; g.fillRect(0,0,w,10);
+  g.fillStyle = '#5d6f63'; g.fillRect(3,3,26,4);
+  g.fillStyle = '#aebfae'; g.fillRect(10,20,44,30);
+  g.fillStyle = '#87977f'; g.fillRect(13,23,38,4);
+  g.fillStyle = '#c3cfc0'; g.fillRect(64,58,50,26);
+  for (let i=0;i<900;i++){ g.fillStyle = `rgba(30,40,32,${rnd(0.02,0.07)})`; g.fillRect(rnd(0,w), rnd(0,h), 1.4, 1.4); }
+});
+
+const M = (c, r=0.95) => new THREE.MeshStandardMaterial({ color:c, roughness:r, metalness:0 });
+function box(w,h,d,mat,x,y,z,ry=0){
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), mat);
+  m.position.set(x,y,z); m.rotation.y = ry;
+  m.castShadow = true; m.receiveShadow = true; scene.add(m); return m;
+}
+
+// ---------- room shell ----------
+const W = 6.2, D = 4.2, H = 3.1, T = 0.16;
+const floor = new THREE.Mesh(new THREE.BoxGeometry(W, 0.18, D),
+  new THREE.MeshStandardMaterial({ map:woodTex, color:0xdccdb4, roughness:0.92 }));
+floor.position.y = -0.09; floor.receiveShadow = true; scene.add(floor);
+const wallBack = new THREE.Mesh(new THREE.BoxGeometry(W, H, T),
+  new THREE.MeshStandardMaterial({ map:plasterTex, roughness:0.97 }));
+wallBack.position.set(0, H/2, -D/2 - T/2); wallBack.receiveShadow = true; scene.add(wallBack);
+const wallLeft = new THREE.Mesh(new THREE.BoxGeometry(T, H, D),
+  new THREE.MeshStandardMaterial({ map:plasterTex, color:0xd3c6ac, roughness:0.97 }));
+wallLeft.position.set(-W/2 - T/2, H/2, 0); wallLeft.receiveShadow = true; scene.add(wallLeft);
+box(W, 0.14, 0.03, M(0x6e5136), 0, 0.07, -D/2 + 0.015);
+box(0.03, 0.14, D, M(0x6e5136), -W/2 + 0.015, 0.07, 0);
+const wallRight = new THREE.Mesh(new THREE.BoxGeometry(T, H, D),
+  new THREE.MeshStandardMaterial({ map:plasterTex, color:0xd3c6ac, roughness:0.97 }));
+wallRight.position.set(W/2 + T/2, H/2, 0); wallRight.receiveShadow = true; scene.add(wallRight);
+const wallFront = new THREE.Mesh(new THREE.BoxGeometry(W, H, T),
+  new THREE.MeshStandardMaterial({ map:plasterTex, color:0xcabfa8, roughness:0.97 }));
+wallFront.position.set(0, H/2, D/2 + T/2); wallFront.receiveShadow = true; scene.add(wallFront);
+const ceil = new THREE.Mesh(new THREE.BoxGeometry(W, 0.12, D), M(0x9a8d76));
+ceil.position.set(0, H + 0.06, 0); scene.add(ceil);
+{
+  const g = new THREE.Group();
+  const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.35), M(0x3a352c));
+  cord.position.y = -0.17; g.add(cord);
+  const shade = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.2, 0.16, 12, 1, true), M(0x77694f));
+  shade.position.y = -0.4; g.add(shade);
+  const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 8),
+    new THREE.MeshStandardMaterial({ color:0xffe2b0, emissive:0xffc978, emissiveIntensity:1.6 }));
+  bulb.position.y = -0.46; g.add(bulb);
+  g.position.set(0, H, 0); scene.add(g);
+}
+
+// ---------- decimated textured models ----------
+const loader = new GLTFLoader();
+async function place(file, target, x, z, ry=0, yBase=0){
+  const g = await loader.loadAsync('models/ps2/' + file);
+  const obj = g.scene;
+  obj.traverse(o => {
+    if (o.isMesh){
+      o.castShadow = true; o.receiveShadow = true;
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      mats.forEach(mt => {           // era shading: diffuse only, no normal/AO maps
+        mt.normalMap = null; mt.roughnessMap = null; mt.metalnessMap = null;
+        mt.aoMap = null; mt.metalness = 0; mt.roughness = Math.max(mt.roughness ?? 0.9, 0.75);
+        mt.needsUpdate = true;
+      });
+    }
+  });
+  const bb = new THREE.Box3().setFromObject(obj);
+  const size = bb.getSize(new THREE.Vector3());
+  const s = target / Math.max(size.x, size.y, size.z);
+  obj.scale.setScalar(s);
+  obj.rotation.y = ry;
+  obj.updateMatrixWorld(true);
+  const bb2 = new THREE.Box3().setFromObject(obj);
+  obj.position.set(x - (bb2.min.x + bb2.max.x)/2, yBase - bb2.min.y, z - (bb2.min.z + bb2.max.z)/2);
+  scene.add(obj);
+  return obj;
+}
+
+const jobs = [
+  place('sofa.glb',        2.05, -2.42, -0.85, Math.PI/2),   // 3 沙发
+  place('coffee_table.glb',1.15, -1.42, -0.85, 0),           // 4 茶几
+  place('floor_lamp.glb',  1.55, -2.84, -1.8, Math.PI - 0.7),           // 5 落地灯
+  place('desk.glb',        1.5,  -2.42,  1.12, Math.PI/2),   // 6 书桌
+  place('chair.glb',       0.95, -1.68,  1.12, -Math.PI/2),  //    椅子
+  place('bookshelf.glb',   1.9,  -1.5,  -1.82, 0),           // 8 书架
+  place('books.glb',       0.62, -1.5,  -1.8,  0, 0.92),     //    书
+  place('clock.glb',       0.55,  0.72, -2.0,  0, 1.82),     // 10 挂钟
+  place('plant1.glb',      0.8,   2.6,   1.45, 0),           // 角落植物
+  place('desk_lamp.glb',   0.5,  -2.66,  1.52, Math.PI/2, 0.74), // 桌灯
+];
+
+// rug (flat box with rug texture)
+{
+  const rug = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.025, 1.9),
+    new THREE.MeshStandardMaterial({ map:rugTex, roughness:1 }));
+  rug.position.set(-1.9, 0.013, -0.85); rug.receiveShadow = true; scene.add(rug);
+}
+
+// 1 房门 (primitive, wood texture)
+{
+  const g = new THREE.Group();
+  const slab = new THREE.Mesh(new THREE.BoxGeometry(0.94, 2.08, 0.06),
+    new THREE.MeshStandardMaterial({ map:doorTex, roughness:0.9 }));
+  slab.position.y = 1.04; g.add(slab);
+  const fr = M(0x5e4630);
+  const top = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.09, 0.1), fr); top.position.y = 2.12; g.add(top);
+  const l = new THREE.Mesh(new THREE.BoxGeometry(0.09, 2.16, 0.1), fr); l.position.set(-0.52, 1.06, 0); g.add(l);
+  const r = l.clone(); r.position.x = 0.52; g.add(r);
+  const knob = new THREE.Mesh(new THREE.SphereGeometry(0.035, 10, 8), M(0x9a7f3f, 0.5));
+  knob.position.set(-0.38, 1.02, 0.06); g.add(knob);
+  g.position.set(2.35, 0, -D/2 + 0.05);
+  g.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
+  scene.add(g);
+}
+
+// 2 衣帽架 (primitive, dark wood)
+{
+  const g = new THREE.Group();
+  const wood = M(0x54402a);
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.035, 1.76, 8), wood);
+  pole.position.y = 0.88; g.add(pole);
+  for (let i=0;i<4;i++){
+    const hk = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.34, 6), wood);
+    hk.position.y = 1.62; hk.rotation.z = 1.05; hk.rotation.y = i * Math.PI/2;
+    hk.translateY(0.1); g.add(hk);
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.5, 6), wood);
+    leg.position.y = 0.12; leg.rotation.z = 0.9; leg.rotation.y = i * Math.PI/2 + 0.4;
+    leg.translateY(0.12); g.add(leg);
+  }
+  g.position.set(1.45, 0, -1.72);
+  g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  scene.add(g);
+}
+
+// 9 窗： frame + outside backdrop (unlit photo plane, classic trick)
+{
+  const g = new THREE.Group();
+  const view = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.15),
+    new THREE.MeshBasicMaterial({ map:outsideTex }));
+  view.position.z = 0.01; g.add(view);
+  const fr = M(0xe3ddd0, 0.85);
+  const mk = (w,h,x,y) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,0.07), fr); m.position.set(x,y,0.03); g.add(m); };
+  mk(1.62, 0.08, 0, 0.615); mk(1.62, 0.08, 0, -0.615); mk(0.08, 1.31, -0.77, 0); mk(0.08, 1.31, 0.77, 0);
+  mk(0.05, 1.15, 0, 0); mk(1.5, 0.05, 0, 0);
+  const sill = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.05, 0.14), fr);
+  sill.position.set(0, -0.68, 0.05); g.add(sill);
+  g.position.set(-0.15, 1.78, -D/2 + 0.03);
+  g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  scene.add(g);
+}
+
+// 7 电脑： CRT with plastic texture + lit screen
+{
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.4, 0.44),
+    new THREE.MeshStandardMaterial({ map:plasticTex, roughness:0.85 }));
+  body.position.y = 0.2; g.add(body);
+  const scr = new THREE.Mesh(new THREE.PlaneGeometry(0.31, 0.24),
+    new THREE.MeshBasicMaterial({ map:screenTex, color:0xd8ded2 }));
+  scr.position.set(0, 0.21, -0.225); scr.rotation.y = Math.PI; g.add(scr);
+  const base = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.04, 0.3),
+    new THREE.MeshStandardMaterial({ map:plasticTex, roughness:0.85 }));
+  base.position.y = 0.02; g.add(base);
+  const kb = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.025, 0.15),
+    new THREE.MeshStandardMaterial({ map:plasticTex, roughness:0.9 }));
+  kb.position.set(0.02, 0.012, -0.42); g.add(kb);
+  g.position.set(-2.6, 0.74, 1.0); g.rotation.y = Math.PI/2 + Math.PI;
+  g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  scene.add(g);
+}
+
+// CRT TV on stand (dressing)
+{
+  const g = new THREE.Group();
+  const stand = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.42, 1.15), M(0x4f3d2c));
+  stand.position.y = 0.21; g.add(stand);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.52, 0.66),
+    new THREE.MeshStandardMaterial({ map:plasticTex, color:0x8f887a, roughness:0.85 }));
+  body.position.y = 0.68; g.add(body);
+  const scr = new THREE.Mesh(new THREE.PlaneGeometry(0.46, 0.36),
+    new THREE.MeshStandardMaterial({ color:0x565e58, roughness:0.35 }));
+  scr.position.set(-0.295, 0.68, 0); scr.rotation.y = -Math.PI/2; g.add(scr);
+  const a1 = new THREE.Mesh(new THREE.CylinderGeometry(0.007, 0.007, 0.55), M(0x8f8a80, 0.5));
+  a1.position.set(0, 1.18, -0.12); a1.rotation.z = 0.5; g.add(a1);
+  const a2 = a1.clone(); a2.position.z = 0.12; a2.rotation.x = 0.45; g.add(a2);
+  g.position.set(0.35, 0, -0.85); g.rotation.y = -0.42;
+  g.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
+  scene.add(g);
+}
+
+// poster with painted texture
+{
+  const g = new THREE.Group();
+  const fr = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.92, 0.04), M(0x3a3128));
+  g.add(fr);
+  const pic = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.82),
+    new THREE.MeshStandardMaterial({ map:posterTex, roughness:0.9 }));
+  pic.position.z = 0.025; g.add(pic);
+  g.position.set(-2.5, 2.05, -D/2 + 0.05);
+  scene.add(g);
+}
+
+await Promise.all(jobs);
+
+// ---------- immersive route glide ----------
+const spots = [
+  { name:'房门',   pos:[2.3, 1.6, -0.3],   look:[2.35, 1.2, -2.05] },
+  { name:'衣帽架', pos:[1.45, 1.6, -0.7],   look:[1.45, 1.25, -1.8] },
+  { name:'沙发',   pos:[-1.1, 1.6, -0.85],  look:[-2.5, 0.85, -0.85] },
+  { name:'茶几',   pos:[-0.45, 1.6, -0.1],  look:[-1.45, 0.42, -0.85] },
+  { name:'落地灯', pos:[-1.9, 1.6, -1.1],   look:[-2.82, 1.3, -1.8] },
+  { name:'书桌',   pos:[-1.5, 1.6, 1.12],   look:[-2.55, 0.8, 1.12] },
+  { name:'电脑',   pos:[-1.9, 1.6, 1.02],   look:[-2.62, 1.02, 1.0] },
+  { name:'书架',   pos:[-1.5, 1.6, -0.75],  look:[-1.5, 1.15, -1.88] },
+  { name:'窗台',   pos:[-0.15, 1.6, -0.8],  look:[-0.15, 1.72, -2.05] },
+  { name:'挂钟',   pos:[0.72, 1.6, -0.9],   look:[0.72, 2.02, -2.0] },
+];
+const V3 = a => new THREE.Vector3(a[0], a[1], a[2]);
+function angles(from, to){
+  const d = to.clone().sub(from);
+  return { yaw: Math.atan2(-d.x, -d.z), pitch: Math.atan2(d.y, Math.hypot(d.x, d.z)) };
+}
+let cur = 0;
+let camPos = V3(spots[0].pos);
+let base = angles(camPos, V3(spots[0].look));
+let yawOff = 0, pitchOff = 0, anim = null;
+camera.rotation.order = 'YXZ';
+function applyCam(){
+  camera.position.copy(camPos);
+  camera.rotation.set(base.pitch + pitchOff, base.yaw + yawOff, 0);
+}
+function goTo(i){
+  i = Math.max(0, Math.min(spots.length - 1, i));
+  const fromBase = { yaw: base.yaw, pitch: base.pitch };
+  const toPos = V3(spots[i].pos), toBase = angles(toPos, V3(spots[i].look));
+  let dyaw = toBase.yaw - fromBase.yaw;
+  while (dyaw > Math.PI) dyaw -= Math.PI * 2;
+  while (dyaw < -Math.PI) dyaw += Math.PI * 2;
+  anim = { t: 0, fromPos: camPos.clone(), toPos, fromBase, toBase, dyaw,
+           fromYawOff: yawOff, fromPitchOff: pitchOff };
+  cur = i; updateUI();
+}
+const ease = t => t < 0.5 ? 2*t*t : 1 - Math.pow(-2*t + 2, 2)/2;
+let last = performance.now();
+function tick(now){
+  const dt = Math.min(0.05, (now - last)/1000); last = now;
+  if (anim){
+    anim.t += dt / 1.5;
+    const e = ease(Math.min(1, anim.t));
+    camPos.lerpVectors(anim.fromPos, anim.toPos, e);
+    base = { yaw: anim.fromBase.yaw + anim.dyaw * e,
+             pitch: anim.fromBase.pitch + (anim.toBase.pitch - anim.fromBase.pitch) * e };
+    yawOff = anim.fromYawOff * (1 - e); pitchOff = anim.fromPitchOff * (1 - e);
+    if (anim.t >= 1) anim = null;
+  }
+  applyCam();
+  renderer.render(scene, camera);
+  requestAnimationFrame(tick);
+}
+let drag = null;
+renderer.domElement.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY }; });
+addEventListener('pointermove', e => {
+  if (!drag) return;
+  yawOff = THREE.MathUtils.clamp(yawOff - (e.clientX - drag.x) * 0.0042, -1.15, 1.15);
+  pitchOff = THREE.MathUtils.clamp(pitchOff - (e.clientY - drag.y) * 0.0032, -0.42, 0.5);
+  drag = { x: e.clientX, y: e.clientY };
+});
+addEventListener('pointerup', () => drag = null);
+const label = document.getElementById('spotName');
+const count = document.getElementById('spotCount');
+const dots = document.getElementById('dots');
+spots.forEach((s2, i) => {
+  const d = document.createElement('button');
+  d.className = 'dot'; d.setAttribute('aria-label', s2.name);
+  d.addEventListener('click', () => goTo(i));
+  dots.appendChild(d);
+});
+function updateUI(){
+  label.textContent = '第 ' + (cur + 1) + ' 个点 · ' + spots[cur].name;
+  count.textContent = (cur + 1) + ' / ' + spots.length;
+  [...dots.children].forEach((d, i) => d.classList.toggle('on', i === cur));
+  document.getElementById('prevBtn').disabled = cur === 0;
+  document.getElementById('nextBtn').disabled = cur === spots.length - 1;
+}
+document.getElementById('prevBtn').addEventListener('click', () => goTo(cur - 1));
+document.getElementById('nextBtn').addEventListener('click', () => goTo(cur + 1));
+function onResize(){
+  camera.aspect = innerWidth / innerHeight;
+  camera.fov = camera.aspect < 1 ? 74 : 62;
+  camera.updateProjectionMatrix();
+  renderer.setSize(Math.round(innerWidth * 0.55), Math.round(innerHeight * 0.55), false);
+}
+addEventListener('resize', onResize);
+onResize();
+window.__walk = { goTo, get cur(){ return cur; }, isAnimating: () => !!anim };
+updateUI();
+applyCam();
+document.getElementById('loading').classList.add('hide');
+window.__ready = true;
+console.log('walk ready');
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>
