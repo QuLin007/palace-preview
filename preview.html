@@ -24463,6 +24463,65 @@ if (BOT && !editView) {
     return focusIdx;
   }, isAnimating: () => !!anim };
 }
+var APP = __q.get("ui") === "app";
+if (APP && !editView) {
+  camPos = V3(HOME.pos);
+  base = angles(camPos, V3(HOME.look));
+  const post = (obj) => {
+    try {
+      window.webkit.messageHandlers.bridge.postMessage(obj);
+    } catch (e) {
+    }
+  };
+  window.__app = {
+    focus(i) {
+      chipFocus = i;
+      pendingFocus = i;
+      glideToArr(spots[i].pos, spots[i].look);
+    },
+    home() {
+      chipFocus = -1;
+      pendingFocus = -1;
+      glideToArr(HOME.pos, HOME.look);
+    }
+  };
+  const prevArrive = window.__onArrive;
+  window.__onArrive = () => {
+    prevArrive();
+    post({ type: "arrived", index: focusIdx });
+  };
+  let frameNo = 0;
+  window.__frame = () => {
+    if ((frameNo++ & 1) === 1) return;
+    const items = [];
+    for (let idx = 0; idx < spots.length; idx++) {
+      const show = chipFocus === -1 || chipFocus === idx;
+      const dp = projPt(anchors[idx].dot), cp = projPt(anchors[idx].chip);
+      const vis = show && !dp.behind && !cp.behind && cp.x > -50 && cp.x < innerWidth + 50 && cp.y > -30 && cp.y < innerHeight + 30;
+      items.push({
+        i: idx,
+        cx: +(cp.x / innerWidth).toFixed(4),
+        cy: +(cp.y / innerHeight).toFixed(4),
+        dx: +(dp.x / innerWidth).toFixed(4),
+        dy: +(dp.y / innerHeight).toFixed(4),
+        v: vis ? 1 : 0
+      });
+    }
+    post({ type: "chips", items });
+  };
+  let aTap = null;
+  renderer.domElement.addEventListener("pointerdown", (e) => {
+    aTap = { x: e.clientX, y: e.clientY, t: performance.now() };
+  });
+  renderer.domElement.addEventListener("pointerup", (e) => {
+    if (!aTap) return;
+    const moved = Math.hypot(e.clientX - aTap.x, e.clientY - aTap.y);
+    const dt = performance.now() - aTap.t;
+    aTap = null;
+    if (moved > 6 || dt > 350 || anim) return;
+    post({ type: "tapEmpty" });
+  });
+}
 updateUI();
 if (!editView) applyCam();
 document.getElementById("loading").classList.add("hide");
