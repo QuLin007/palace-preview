@@ -63,7 +63,7 @@
 <div id="loading">正在进入地图</div>
 <div id="worldTitle">记忆宫殿</div>
 <div id="chips"><svg class="leader"></svg></div>
-<div id="hint">点房子上的名牌，走过去看</div>
+<div id="hint">点一下房子，它的牌子会出来</div>
 <div class="pill">
   <button id="listBtn" aria-label="宫殿列表"><svg viewBox="0 0 24 24"><path d="M8.5 6h11M8.5 12h11M8.5 18h11"/><circle cx="4.8" cy="6" r="0.6" fill="#fff"/><circle cx="4.8" cy="12" r="0.6" fill="#fff"/><circle cx="4.8" cy="18" r="0.6" fill="#fff"/></svg></button>
   <button id="newBtn" aria-label="新建宫殿"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.2"/><path d="M12 8.6v6.8M8.6 12h6.8"/></svg></button>
@@ -22341,18 +22341,39 @@ renderer.domElement.addEventListener("pointerup", (e) => {
   const wasTap = downAt && Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) < 6 && performance.now() - downAt.t < 350;
   drag = null;
   downAt = null;
-  if (wasTap) onTapEmpty();
+  if (wasTap) {
+    if (!sceneTapReveal(e.clientX, e.clientY)) onTapEmpty();
+  }
 });
 var chipsRoot = document.getElementById("chips");
 var leader = chipsRoot.querySelector(".leader");
 var anchors = PALACES.map((p) => ({
   dot: new Vector3(p.x, groundH(p.x, p.z) + 3.6, p.z),
-  chip: new Vector3(p.x, groundH(p.x, p.z) + 4.75, p.z)
+  chip: new Vector3(p.x, groundH(p.x, p.z) + 4.75, p.z),
+  hit: new Vector3(p.x, groundH(p.x, p.z) + 1.7, p.z)
 }));
 anchors.push({
   dot: new Vector3(EMPTY.x, groundH(EMPTY.x, EMPTY.z) + 1, EMPTY.z),
-  chip: new Vector3(EMPTY.x, groundH(EMPTY.x, EMPTY.z) + 1.85, EMPTY.z)
+  chip: new Vector3(EMPTY.x, groundH(EMPTY.x, EMPTY.z) + 1.85, EMPTY.z),
+  hit: new Vector3(EMPTY.x, groundH(EMPTY.x, EMPTY.z) + 0.7, EMPTY.z)
 });
+var revealed = /* @__PURE__ */ new Set();
+function sceneTapReveal(x, y) {
+  if (focus !== -1) return false;
+  let hit = false;
+  anchors.forEach((a, i) => {
+    const hp = proj(a.hit);
+    if (!hp.behind && Math.hypot(hp.x - x, hp.y - y) < 130) {
+      revealed.add(i);
+      hit = true;
+    }
+  });
+  if (hit && !hintDone) {
+    hintDone = true;
+    document.getElementById("hint").style.opacity = 0;
+  }
+  return hit;
+}
 var chipEls = [];
 var lineEls = [];
 var dotEls = [];
@@ -22387,7 +22408,7 @@ function drawChips() {
   leader.setAttribute("width", innerWidth);
   leader.setAttribute("height", innerHeight);
   anchors.forEach((a, i) => {
-    const show = focus === -1 || focus === i;
+    const show = focus === -1 ? revealed.has(i) : focus === i;
     const cp = proj(a.chip), dp = proj(a.dot);
     const vis = show && !cp.behind && cp.x > -60 && cp.x < innerWidth + 60 && cp.y > -20 && cp.y < innerHeight + 40;
     chipEls[i].style.display = vis ? "block" : "none";
@@ -22439,9 +22460,11 @@ function onTapEmpty() {
     return;
   }
   if (focus !== -1 && !anim) goHome();
+  else revealed.clear();
 }
 function goHome() {
   focus = -1;
+  revealed.clear();
   glideTo({ ...HOME }, 1.6);
 }
 function enter() {
@@ -22524,9 +22547,17 @@ addEventListener("resize", () => {
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
 });
-window.__map = { tap: onChip, home: goHome, get focus() {
-  return focus;
-}, isAnimating: () => !!anim };
+window.__map = {
+  tap: onChip,
+  home: goHome,
+  sceneTapAt: (x, y) => sceneTapReveal(x, y),
+  anchorPx: (i) => proj(anchors[i].hit),
+  revealed: () => [...revealed],
+  get focus() {
+    return focus;
+  },
+  isAnimating: () => !!anim
+};
 window.__mapDebug = () => ({ pose: { ...pose }, cam: camera.position.toArray().map((v) => +v.toFixed(2)) });
 /**
  * @license
