@@ -24192,6 +24192,8 @@ var camPos = V3(spots[0].pos);
 var base = angles(camPos, V3(spots[0].look));
 var yawOff = 0;
 var pitchOff = 0;
+var yawT = 0;
+var pitchT = 0;
 var anim = null;
 camera.rotation.order = "YXZ";
 function applyCam() {
@@ -24234,10 +24236,16 @@ function tick(now) {
     };
     yawOff = anim.fromYawOff * (1 - e);
     pitchOff = anim.fromPitchOff * (1 - e);
+    yawT = yawOff;
+    pitchT = pitchOff;
     if (anim.t >= 1) {
       anim = null;
       if (window.__onArrive) window.__onArrive();
     }
+  } else {
+    const k = Math.min(1, dt * 11);
+    yawOff += (yawT - yawOff) * k;
+    pitchOff += (pitchT - pitchOff) * k;
   }
   if (!editView) applyCam();
   if (window.__frame) window.__frame();
@@ -24250,8 +24258,8 @@ renderer.domElement.addEventListener("pointerdown", (e) => {
 });
 addEventListener("pointermove", (e) => {
   if (!drag) return;
-  yawOff = MathUtils.clamp(yawOff - (e.clientX - drag.x) * 42e-4, -1.15, 1.15);
-  pitchOff = MathUtils.clamp(pitchOff - (e.clientY - drag.y) * 32e-4, -0.42, 0.5);
+  yawT = MathUtils.clamp(yawT - (e.clientX - drag.x) * 21e-4, -1.15, 1.15);
+  pitchT = MathUtils.clamp(pitchT - (e.clientY - drag.y) * 16e-4, -0.42, 0.5);
   drag = { x: e.clientX, y: e.clientY };
 });
 addEventListener("pointerup", () => drag = null);
@@ -24285,6 +24293,7 @@ onResize();
 window.__walk = { goTo, get cur() {
   return cur;
 }, isAnimating: () => !!anim };
+window.__camDebug = () => ({ yawOff: +yawOff.toFixed(4), pitchOff: +pitchOff.toFixed(4), yawT: +yawT.toFixed(4), pitchT: +pitchT.toFixed(4) });
 var __ss = parseInt(new URLSearchParams(location.search).get("spot") || "0", 10);
 if (__ss > 0 && __ss < spots.length) {
   cur = __ss;
